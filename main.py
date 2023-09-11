@@ -131,13 +131,17 @@ def get_toc_from_epub(book):
 
     return toc_items
 
-def remove_unimportant_chapters(toc, book, model='gpt-3.5-turbo'):
-    chapters = []
+def remove_unimportant_chapters(book, model='gpt-3.5-turbo'):
+    chapter_dict = {}
     for item in book.get_items():
         if item.get_type() == ebooklib.ITEM_DOCUMENT:
-            chapters.append(item)
+            chapter_dict[item.get_id()] = item
+    
+    chapters = []
+    for id, _ in book.spine:
+        chapters.append(chapter_dict[id])
 
-    toc_str = '\n'.join([t.title for t in toc])
+    toc_str = '\n'.join([t.title for t in book.toc])
     completion = openai.ChatCompletion.create(
         model=model,
         messages=[{"role": "user", "content": TOC_PROMPT.format(toc=toc_str)}],
@@ -146,26 +150,32 @@ def remove_unimportant_chapters(toc, book, model='gpt-3.5-turbo'):
 
     new_toc_list = completion.choices[0].message.content.split('\n')
     new_toc = []
-    for t in toc:
+    for t in book.toc:
         if t.title in new_toc_list:
             new_toc.append(t)
+    book.toc = new_toc
     
     shortened_toc_chapters = [t.href for t in new_toc]
-    toc_chapters = [t.href for t in toc]
-    shotend_chapters = []
+    toc_chapters = [t.href for t in book.toc]
+    new_chapters = []
     adding = False
     for chapter in chapters:
         if chapter.get_name() in toc_chapters:
-            
             if chapter.get_name() in shortened_toc_chapters:
-                shotend_chapters.append(chapter)
+                new_chapters.append(chapter)
                 adding = True
             else:
                 adding = False
         elif adding:
-            shotend_chapters.append(chapter)
+            new_chapters.append(chapter)
 
-    return new_toc, shotend_chapters
+    new_items = []
+    for item in book.get_items():
+        if item.get_type() != ebooklib.ITEM_DOCUMENT or item in new_chapters:
+            new_items.append(item)
+    
+    book.items = new_items
+
 
 if __name__ == "__main__":
     # Parse arguments
@@ -190,32 +200,12 @@ if __name__ == "__main__":
     book = epub.read_epub(args.input)
 
     # Remove unimportant chapters from table of contents
-    old_important_toc, old_important_chapters = remove_unimportant_chapters(book.toc, book)
-    
-    # Shorten each chapter
-    shortend_chapters = [
-        shorten_chapter(chapter, model=args.openai_model, ratio=args.ratio) 
-        for chapter in tqdm(old_important_chapters)
-    ]
+    remove_unimportant_chapters(book)
 
-    # Create new book
-    new_book = epub.EpubBook()
-    # new_book.set_title(book.get_metadata('DC', 'title'))
-    # new_book.add_author(book.get_metadata('DC', 'creator'))
-    
-    # Add chapters
-    for i in range(len(old_important_chapters)):
-        c = epub.EpubHtml(file_name=old_important_chapters[i].get_name())
-        c.content = f'<html><p>' + "</p><p>".join(shortend_chapters[i].split("\n")) + '</p></html>'
-        new_book.add_item(c)
-
-    # add images
-    for image in book.get_items_of_type(ebooklib.ITEM_IMAGE):
-        new_book.add_item(image)
-    
-    # Add table of contents
-    # TODO
-    # new_book.toc = important_toc
+    documents = list([item for item in book.get_items() if item.get_type() == ebooklib.ITEM_DOCUMENT])
+    for item in tqdm(documents):
+        shortend_text = shorten_chapter(item, model=args.openai_model, ratio=args.ratio) 
+        item.set_content(f'<html><p>' + "</p><p>".join(shortend_text.split("\n")) + '</p></html>')
     
     # save to file
-    epub.write_epub(args.output, new_book)
+    epub.write_epub(args.output, book)
