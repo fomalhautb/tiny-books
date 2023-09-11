@@ -53,6 +53,16 @@ Do not explain or output anything other than the shortened version
 """
 
 
+TOC_PROMPT = """
+I am creating a shortened version of a book. Here is the table of contents. Please remove the sections that are not essential for the readers (like the preface, appendix, references, legal information, etc.). Please return a list in the same format as below but with unimportant sections removed. 
+
+{toc}
+
+ONLY output the list (the table of contents). DO NOT output anything else or explain.
+"""
+
+
+
 def chap2text(chap):
     soup = BeautifulSoup(chap, 'html.parser')
 
@@ -94,6 +104,7 @@ def shorten_chapter(chapter, model='gpt-3.5-turbo', ratio=0.1):
     completion = openai.ChatCompletion.create(
         model=model,
         messages=messages,
+        temperature=0,
     )
 
     return completion.choices[0].message.content
@@ -120,14 +131,26 @@ def get_toc_from_epub(book):
 
     return toc_items
 
-def remove_unimportant_chapters(toc, book):
+def remove_unimportant_chapters(toc, book, model='gpt-3.5-turbo'):
     chapters = []
     for item in book.get_items():
         if item.get_type() == ebooklib.ITEM_DOCUMENT:
             chapters.append(item)
+
+    toc_str = '\n'.join([t.title for t in toc])
+    completion = openai.ChatCompletion.create(
+        model=model,
+        messages=[{"role": "user", "content": TOC_PROMPT.format(toc=toc_str)}],
+        temperature=0,
+    )
+
+    new_toc_list = completion.choices[0].message.content.split('\n')
+    new_toc = []
+    for t in toc:
+        if t.title in new_toc_list:
+            new_toc.append(t)
     
-    shortened_toc = toc[3:4] # TODO
-    shortened_toc_chapters = [t.href for t in shortened_toc]
+    shortened_toc_chapters = [t.href for t in new_toc]
     toc_chapters = [t.href for t in toc]
     shotend_chapters = []
     adding = False
@@ -142,7 +165,7 @@ def remove_unimportant_chapters(toc, book):
         elif adding:
             shotend_chapters.append(chapter)
 
-    return shortened_toc, shotend_chapters
+    return new_toc, shotend_chapters
 
 if __name__ == "__main__":
     # Parse arguments
@@ -168,7 +191,7 @@ if __name__ == "__main__":
 
     # Remove unimportant chapters from table of contents
     old_important_toc, old_important_chapters = remove_unimportant_chapters(book.toc, book)
-
+    
     # Shorten each chapter
     shortend_chapters = [
         shorten_chapter(chapter, model=args.openai_model, ratio=args.ratio) 
