@@ -153,7 +153,6 @@ def remove_unimportant_chapters(book, model='gpt-3.5-turbo'):
     for t in book.toc:
         if t.title in new_toc_list:
             new_toc.append(t)
-    book.toc = new_toc
     
     shortened_toc_chapters = [t.href for t in new_toc]
     toc_chapters = [t.href for t in book.toc]
@@ -175,6 +174,7 @@ def remove_unimportant_chapters(book, model='gpt-3.5-turbo'):
             new_items.append(item)
     
     book.items = new_items
+    book.toc = new_toc
 
 
 if __name__ == "__main__":
