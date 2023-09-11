@@ -13,7 +13,7 @@ from tqdm import tqdm
 MIN_NUM_CHARS_TO_SUMMARIZE = 100
 
 
-SHORTEN_PROMPT = """
+PROMPT_WITHOUT_IMAGE = """
 Please shorten this paragraph to about {num_words} words. 
 Please try to keep the original structure as much as possible. Please also try to keep the original style and tone. 
 You can skip the part that is not important. Allocate words wisely on the important things.
@@ -22,8 +22,34 @@ You can skip the part that is not important. Allocate words wisely on the import
 {text}
 ```
 
-ONLY output the shortened paragraph. Do not output anything else. 
-Keep all the <img> HTML tags in the original paragraph. DO NOT remove them. (Those are not counted as words.)
+ONLY output the shortened paragraph. Do not output anything else.
+"""
+
+SYSTEM_PROMPT_WITH_IMAGE = """
+You must keep ALL the images in the shortened version. The images are not counted in the word limit.
+"""
+
+PROMPT_WITH_IMAGE = """
+# Instructions
+Please shorten this paragraph to about {num_words} words. 
+Please try to keep the original structure as much as possible. Please also try to keep the original style and tone. 
+You can skip the part that is not important. Allocate words wisely on the important things.
+Keep the <img/> tags in the shortened version. Put them in suitable locations
+
+# Example
+## Input
+As the sun dipped below the horizon, casting a warm orange glow across the tranquil lake, <img src="image01_sunset.jpg"/> Sarah couldn't help but feel a sense of serenity wash over her. The gentle ripples on the water's surface mirrored the calmness she found within herself. A light breeze rustled the leaves of the tall trees that lined the shore, creating a soothing symphony of nature's whispers. It was moments like these when she felt most connected to the world around her, a reminder of the beauty that could be found in the simplest of moments.
+## Output
+As the sun set over the lake, <img src="image01_sunset.jpg"/> Sarah felt serene, with ripples and rustling leaves creating a tranquil atmosphere.
+
+# Text to be shortened:
+```
+{text}
+```
+
+# Important
+In the shortened version, {imgs} MUST be contained
+Do not explain or output anything other than the shortened version
 """
 
 
@@ -31,6 +57,7 @@ def chap2text(chap):
     soup = BeautifulSoup(chap, 'html.parser')
 
     elements = []
+    imgs = []
     blacklist = ['[document]', 'noscript', 'header', 'html', 'meta', 'head', 'input', 'script']
     block_elements = ['p', 'div', 'br']
 
@@ -43,29 +70,32 @@ def chap2text(chap):
                     elements.append(str(descendant))
         elif isinstance(descendant, Tag) and descendant.name == 'img':
             elements.append(str(descendant))
+            imgs.append(str(descendant))
 
-    return ''.join(elements)
+    return ''.join(elements), ', '.join(imgs)
 
 
 def shorten_chapter(chapter, model='gpt-3.5-turbo', ratio=0.1):
-    text = chap2text(chapter.get_content())
+    text, imgs = chap2text(chapter.get_content())
 
     if len(text) < MIN_NUM_CHARS_TO_SUMMARIZE:
         return text
     
     num_words = math.ceil(len(text.split()) * args.ratio / 10) * 10
-    prompt = SHORTEN_PROMPT.format(num_words=num_words, text=text)
+
+    messages = []
+    if len(imgs) > 0:
+        prompt = PROMPT_WITH_IMAGE.format(num_words=num_words, text=text, imgs=imgs)
+        messages.append({"role": "system", "content": SYSTEM_PROMPT_WITH_IMAGE})
+    else:
+        prompt = PROMPT_WITHOUT_IMAGE.format(num_words=num_words, text=text)
+    messages.append({"role": "user", "content": prompt})
 
     completion = openai.ChatCompletion.create(
-        model="gpt-3.5-turbo",
-        messages=[{"role": "user", "content": prompt}]
+        model=model,
+        messages=messages,
     )
-    print(prompt)
-    print('------------------')
-    print(completion.choices[0].message.content)
-    print('='*100)
-    print('='*100)
-    print('='*100)
+
     return completion.choices[0].message.content
 
 
@@ -122,7 +152,7 @@ if __name__ == "__main__":
     parser.add_argument('--openai-key', type=str, default=None, help='OpenAI API key. If not specified, the key will be read from the environment variable OPENAI_KEY.')
     parser.add_argument('--openai-org', type=str, default=None, help='OpenAI organization ID. If not specified, the key will be read from the environment variable OPENAI_ORG.')
     parser.add_argument('--openai-model', type=str, default='gpt-3.5-turbo', help='Which OpenAI model to use.')
-    parser.add_argument('--ratio', type=float, default=0.1, help='Length ratio of the shortend version to the original version.')
+    parser.add_argument('--ratio', type=float, default=0.15, help='Length ratio of the shortend version to the original version.')
     args = parser.parse_args()
 
     if args.openai_key is not None:
