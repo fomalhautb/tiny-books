@@ -67,9 +67,8 @@ def chap2text(chap):
     soup = BeautifulSoup(chap, 'html.parser')
 
     elements = []
-    imgs = []
     blacklist = ['[document]', 'noscript', 'header', 'html', 'meta', 'head', 'input', 'script']
-    block_elements = ['p', 'div', 'br']
+    block_elements = ['p', 'div', 'br', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'ul', 'ol', 'blockquote']
 
     for descendant in soup.descendants:
         if isinstance(descendant, NavigableString) and descendant.strip():
@@ -80,18 +79,14 @@ def chap2text(chap):
                     elements.append(str(descendant))
         elif isinstance(descendant, Tag) and descendant.name == 'img':
             elements.append(str(descendant))
-            imgs.append(str(descendant))
 
-    return ''.join(elements), ', '.join(imgs)
+    return elements
 
 
-def shorten_chapter(chapter, model='gpt-3.5-turbo', ratio=0.1):
-    text, imgs = chap2text(chapter.get_content())
-
-    if len(text) < MIN_NUM_CHARS_TO_SUMMARIZE:
-        return text
-    
-    num_words = math.ceil(len(text.split()) * args.ratio / 10) * 10
+def shorten_chunk(elements, model='gpt-3.5-turbo', ratio=0.1):
+    imgs = [e for e in elements if e.startswith('<img')]
+    text = ''.join(elements)
+    num_words = math.ceil(len(text.split()) * ratio / 10) * 10
 
     messages = []
     if len(imgs) > 0:
@@ -106,9 +101,40 @@ def shorten_chapter(chapter, model='gpt-3.5-turbo', ratio=0.1):
         messages=messages,
         temperature=0,
     )
-
+    # print(''.join(elements))
+    # print('----------------------------------')
+    # print(completion.choices[0].message.content)
+    # print()
+    # print('==================================')
+    # print('==================================')
+    # print('==================================')
+    # print()
     return completion.choices[0].message.content
 
+
+def shorten_chapter(chapter, model='gpt-3.5-turbo', ratio=0.1, chunk_size=10000):
+    elements = chap2text(chapter.get_content())
+
+    if len(''.join(elements)) < MIN_NUM_CHARS_TO_SUMMARIZE:
+        return ''.join(elements)
+    
+    chunk = []
+    length = 0
+    shortend = ''
+    for element in elements:
+        if length + len(element) > chunk_size:
+            shortend += shorten_chunk(chunk, model=model, ratio=ratio)
+            chunk = []
+            length = 0
+        
+        chunk.append(element)
+        length += len(element)
+    
+    if len(chunk) > 0:
+        shortend += shorten_chunk(chunk, model=model, ratio=ratio)
+
+    return shortend
+    
 
 def remove_unimportant_chapters(book, model='gpt-3.5-turbo'):
     chapter_dict = {}
@@ -166,6 +192,7 @@ if __name__ == "__main__":
     parser.add_argument('--openai-org', type=str, default=None, help='OpenAI organization ID. If not specified, the key will be read from the environment variable OPENAI_ORG.')
     parser.add_argument('--openai-model', type=str, default='gpt-3.5-turbo', help='Which OpenAI model to use.')
     parser.add_argument('--ratio', type=float, default=0.15, help='Length ratio of the shortend version to the original version.')
+    parser.add_argument('--chunk_size', type=int, default=4000, help='Number of characters to send to OpenAI at a time.')
     args = parser.parse_args()
 
     if args.openai_key is not None:
@@ -184,7 +211,7 @@ if __name__ == "__main__":
 
     documents = list([item for item in book.get_items() if item.get_type() == ebooklib.ITEM_DOCUMENT])
     for item in tqdm(documents):
-        shortend_text = shorten_chapter(item, model=args.openai_model, ratio=args.ratio) 
+        shortend_text = shorten_chapter(item, model=args.openai_model, ratio=args.ratio, chunk_size=args.chunk_size) 
         item.set_content(f'<html><p>' + "</p><p>".join(shortend_text.split("\n")) + '</p></html>')
     
     # save to file
