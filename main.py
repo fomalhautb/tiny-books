@@ -54,11 +54,11 @@ Do not explain or output anything other than the shortened version
 
 
 TOC_PROMPT = """
-I am creating a shortened version of a book. Here is the table of contents. Please remove the sections that are not essential for the readers (like the preface, appendix, references, legal information, etc.). Please return a list in the same format as below but with unimportant sections removed. 
+I am creating a shortened version of a book. Here is the table of contents. Please remove the sections that are not essential for the readers (like the preface, appendix, references, legal information, copyright information, title_page, table of content, etc.). Please return a list in the same format as below but with unimportant sections removed. 
 
 {toc}
 
-ONLY output the list (the table of contents). DO NOT output anything else or explain.
+ONLY output the shortened table of contents. DO NOT output anything else or explain.
 """
 
 
@@ -110,27 +110,6 @@ def shorten_chapter(chapter, model='gpt-3.5-turbo', ratio=0.1):
     return completion.choices[0].message.content
 
 
-def get_toc_from_epub(book):
-    toc_items = []
-    if book.toc:
-        # Recursively parse TOC items
-        def parse_node(node):
-            if isinstance(node, tuple):
-                return {
-                    'title': node[0].title,
-                    'href': node[0].href,
-                    'children': [parse_node(subnode) for subnode in node[1]]
-                }
-            else:
-                return {
-                    'title': node.title,
-                    'href': node.href,
-                }
-
-        toc_items = [parse_node(node) for node in book.toc]
-
-    return toc_items
-
 def remove_unimportant_chapters(book, model='gpt-3.5-turbo'):
     chapter_dict = {}
     for item in book.get_items():
@@ -140,8 +119,7 @@ def remove_unimportant_chapters(book, model='gpt-3.5-turbo'):
     chapters = []
     for id, _ in book.spine:
         chapters.append(chapter_dict[id])
-
-    toc_str = '\n'.join([t.title for t in book.toc])
+    toc_str = '\n'.join([t[0].title if isinstance(t, tuple) else t.title for t in book.toc])
     completion = openai.ChatCompletion.create(
         model=model,
         messages=[{"role": "user", "content": TOC_PROMPT.format(toc=toc_str)}],
@@ -149,13 +127,15 @@ def remove_unimportant_chapters(book, model='gpt-3.5-turbo'):
     )
 
     new_toc_list = completion.choices[0].message.content.split('\n')
+    new_toc_list.remove('Contents')
     new_toc = []
     for t in book.toc:
-        if t.title in new_toc_list:
+        if (t[0].title if isinstance(t, tuple) else t.title) in new_toc_list:
             new_toc.append(t)
     
-    shortened_toc_chapters = [t.href for t in new_toc]
-    toc_chapters = [t.href for t in book.toc]
+    shortened_toc_chapters = [t[0].href if isinstance(t, tuple) else t.href for t in new_toc]
+    toc_chapters = [t[0].href if isinstance(t, tuple) else t.href for t in book.toc]
+
     new_chapters = []
     adding = False
     for chapter in chapters:
